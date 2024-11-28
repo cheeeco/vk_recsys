@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 from tqdm import tqdm
 from pathlib import Path
 from lifelines.utils import concordance_index
@@ -16,6 +18,15 @@ def load_data():
     user_meta_data = pd.read_parquet(users_meta_data_path)
     item_meta_data = pd.read_parquet(items_meta_data_path)
     test_pairs_data = pd.read_csv(test_pairs_data_path)
+
+    # np.uint8 -> np.int16 cast to allow subtraction
+    user_item_data[user_item_data.dtypes[user_item_data.dtypes == np.uint8].index] = (
+        user_item_data[
+            user_item_data.dtypes[user_item_data.dtypes == np.uint8].index
+        ].astype(np.int16)
+    )
+    # single column for likes and dislikes
+    user_item_data["explicit"] = user_item_data.like - user_item_data.dislike
 
     return user_item_data, user_meta_data, item_meta_data, test_pairs_data
 
@@ -65,3 +76,49 @@ def roc_auc_score(y_true, y_score):
             num += compare_score(y_score[i], y_score[j])*compare_target(y_true[i], y_true[j])
             denom += compare_target(y_true[i], y_true[j])
     return num/denom if denom>0 else None
+
+
+def plot_feature_importances(model, graphic=True, figsize=(10, 6), palette='viridis'):
+    """
+    Plots the feature importances of a trained CatBoost model.
+
+    Parameters:
+        model (catboost.CatBoost): Trained CatBoost model.
+        graphic (bool): Flag for graphical visualization. If false, then feature importances are printed.
+        figsize (tuple): Size of the plot, default is (10, 6).
+        palette (str): Seaborn color palette for the barplot, default is 'viridis'.
+    """
+    # Get feature importances
+    feature_importances = model.get_feature_importance()
+    feature_names = model.feature_names_
+    # Create a DataFrame for plotting
+    feature_importance_df = pd.DataFrame({
+        'feature': feature_names,
+        'importance': feature_importances
+    })
+
+    # Sort by importance
+    feature_importance_df = feature_importance_df.sort_values(by='importance', ascending=False)
+
+    if graphic is True:
+        # Set up the matplotlib figure
+        plt.figure(figsize=figsize)
+
+        # Create a horizontal bar plot
+        sns.barplot(x='importance', y='feature', data=feature_importance_df, palette=palette, hue='feature')
+
+        # Set plot title and labels
+        plt.grid()
+        plt.title('CatBoost Model Feature Importances', fontsize=16)
+        plt.xlabel('Importance', fontsize=12)
+        plt.ylabel('Feature', fontsize=12)
+
+        # Display the plot
+        plt.show()
+
+    elif graphic is False:
+        for feature, importance in zip(feature_importance_df["feature"],
+                                       feature_importance_df["importance"]):
+            print(f"{feature=}, {importance=}")
+    else:
+        raise ValueError("ERROR. Wrong graphic argument")
