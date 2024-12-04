@@ -28,16 +28,40 @@ def load_data():
             user_item_data.dtypes[user_item_data.dtypes == np.uint8].index
         ].astype(np.int16)
     )
+    user_meta_data[user_meta_data.dtypes[user_meta_data.dtypes == np.uint8].index] = (
+        user_meta_data[
+            user_meta_data.dtypes[user_meta_data.dtypes == np.uint8].index
+        ].astype(np.int16)
+    )
+    item_meta_data[item_meta_data.dtypes[item_meta_data.dtypes == np.uint8].index] = (
+        item_meta_data[
+            item_meta_data.dtypes[item_meta_data.dtypes == np.uint8].index
+        ].astype(np.int16)
+    )
     # single column for likes and dislikes
     user_item_data["explicit"] = user_item_data.like - user_item_data.dislike
 
     return user_item_data, user_meta_data, item_meta_data, test_pairs_data
 
 
-def get_sparse_train_val():
+def get_sparse_train_val(share_weight=0, bookmarks_weight=0, timespent_rel_weight=0):
     user_item_data, user_meta_data, item_meta_data, test_pairs_data = load_data()
+    user_item_data = user_item_data.merge(
+        item_meta_data.drop(columns="embeddings"), on="item_id", how="left"
+    )
+    user_item_data["timespent_rel"] = (
+        user_item_data["timespent"] / user_item_data["duration"]
+    )
+
     ui_train, ui_val = train_test_split(
         user_item_data, test_size=0.15, random_state=42, shuffle=False
+    )
+
+    ui_train["weighted_target"] = ui_train["like"] * (
+        1
+        + share_weight * ui_train.share
+        + bookmarks_weight * ui_train.bookmarks
+        + timespent_rel_weight * ui_train.timespent_rel
     )
     u_train = ui_train.user_id.values
     i_train = ui_train.item_id.values

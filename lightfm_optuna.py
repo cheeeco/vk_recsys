@@ -1,7 +1,7 @@
 import numpy as np
 import optuna
-from implicit.als import AlternatingLeastSquares
-from implicit.nearest_neighbours import bm25_weight, tfidf_weight
+import lightfm
+from scipy.sparse import csr_matrix
 from loguru import logger
 from optuna.storages import RDBStorage
 
@@ -11,8 +11,10 @@ from utils import evaluate, get_sparse_train_val
 # Objective function for Optuna
 def objective(trial):
     # Hyperparameter sampling
-    factors = trial.suggest_int("factors", 128, 256, step=1)
-    regularization = trial.suggest_loguniform("regularization", 1e-5, 9e-1)
+    no_components = trial.suggest_int("no_components", 8, 256, step=1)
+    learning_schedule = trial.suggest_categorical("learning_schedule", ['adagrad', 'adadelta'])
+    loss = trial.suggest_categorical("loss", ['logistic', 'bpr', 'warp', 'warp-kos'])
+    regularization = trial.suggest_float("regularization", 1e-5, 9e-1, log=True)
     alpha = trial.suggest_loguniform("alpha", 1e-1, 10)
     iterations = trial.suggest_int("iterations", 15, 80, step=1)
     use_cg = trial.suggest_categorical("use_cg", [True, False])
@@ -50,16 +52,9 @@ def objective(trial):
     logger.info(f"Data preprocessed with {feedback_preprocessing=}")
 
     # Create ALS model with sampled parameters
-    model = AlternatingLeastSquares(
-        factors=factors,
-        regularization=regularization,
-        alpha=alpha,
-        iterations=iterations,
-        dtype=np.float32,
-        use_native=True,
-        use_cg=use_cg,
-        calculate_training_loss=False,
-        num_threads=16,
+    model = lightfm.LightFM(
+        no_components=128,
+        loss="bpr",
         random_state=42,
     )
     logger.info("Model initialized")
