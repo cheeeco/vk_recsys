@@ -1,3 +1,6 @@
 *.csv
 data
 vk_env
+__pycache__/
+ranker
+dumps

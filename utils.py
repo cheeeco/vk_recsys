@@ -22,7 +22,7 @@ def load_data():
     item_meta_data = pd.read_parquet(items_meta_data_path)
     test_pairs_data = pd.read_csv(test_pairs_data_path)
 
-    # np.uint8 -> np.int16 cast to allow subtraction
+    # np.uint8 -> np.int16 cast to allow subtraction and just for predictable behaviour
     user_item_data[user_item_data.dtypes[user_item_data.dtypes == np.uint8].index] = (
         user_item_data[
             user_item_data.dtypes[user_item_data.dtypes == np.uint8].index
