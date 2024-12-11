@@ -9,6 +9,8 @@ from scipy.sparse import csr_matrix
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
+VAL_USER_IDS_PATH = "dumps/val_user_ids.npy"
+
 
 def load_data():
     data_path = Path("./data")
@@ -192,3 +194,70 @@ def plot_feature_importances(model, graphic=True, figsize=(10, 6), palette="viri
             print(f"{feature=}, {importance=}")
     else:
         raise ValueError("ERROR. Wrong graphic argument")
+
+
+def train_test_split_wise(
+    user_item_data: pd.DataFrame,
+    test_size: float = 0.15,
+    random_state: int = 42,
+    shuffle: bool = False,
+):
+    train_df, val_df = train_test_split(
+        user_item_data,
+        test_size=test_size,
+        random_state=random_state,
+        shuffle=shuffle,
+    )
+    # Step 1: Filter users with less than 20 interactions
+    interaction_counts = val_df["user_id"].value_counts()
+    users_with_20_plus_interactions = interaction_counts[interaction_counts >= 20].index
+    val_df = val_df[val_df["user_id"].isin(users_with_20_plus_interactions)]
+    # Step 2: Keep only the first 20 interactions per user
+    val_df["interaction_rank"] = val_df.groupby("user_id").cumcount() + 1
+    val_df = val_df[val_df["interaction_rank"] <= 20].drop(columns="interaction_rank")
+    # Step 3: Filter out users with zero total likes
+    user_likes = val_df.groupby("user_id")["like"].sum()
+    users_with_likes = user_likes[user_likes > 0].index
+    val_df = val_df[val_df["user_id"].isin(users_with_likes)]
+
+    return train_df, val_df
+
+
+class ROCAUCMetric:
+    def is_max_optimal(self):
+        return True  # greater is better
+
+    def evaluate(self, approxes, target, weight):
+        assert len(approxes) == 1
+        assert len(target) == len(approxes[0])
+
+        val_user_ids = np.load(VAL_USER_IDS_PATH)
+        approx = approxes[0]
+
+        roc_auc_score = evaluate(
+            user_id=val_user_ids,
+            target=target,
+            score=approx,
+        )
+
+        return roc_auc_score, 1
+
+    def get_final_error(self, error, weight):
+        return error / weight
+
+
+def make_val_testlike(val_df: pd.DataFrame, target: str = "like") -> pd.DataFrame:
+    val_df = val_df.copy()
+    # Step 1: Filter users with less than 20 interactions
+    interaction_counts = val_df["user_id"].value_counts()
+    users_with_20_plus_interactions = interaction_counts[interaction_counts >= 20].index
+    val_df = val_df[val_df["user_id"].isin(users_with_20_plus_interactions)]
+    # Step 2: Keep only the first 20 interactions per user
+    val_df["interaction_rank"] = val_df.groupby("user_id").cumcount() + 1
+    val_df = val_df[val_df["interaction_rank"] <= 20].drop(columns="interaction_rank")
+    # Step 3: Filter out users with zero total likes
+    user_likes = val_df.groupby("user_id")[target].apply(lambda x: (x != 0).any())
+    users_with_likes = user_likes[user_likes > 0].index
+    val_df = val_df[val_df["user_id"].isin(users_with_likes)]
+
+    return val_df
