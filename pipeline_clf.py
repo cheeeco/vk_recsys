@@ -1,22 +1,22 @@
 import numpy as np
 import pandas as pd
-from catboost import CatBoostRanker, Pool
+from catboost import CatBoostClassifier, Pool
 from loguru import logger
 
 from feature_processor import create_features, make_collaborative_filtering
 from utils import (
     TRAIN_USER_IDS_PATH,
     VAL_USER_IDS_PATH,
-    ROCAUCMetric,
+    ROCAUCMetric4Clf,
     evaluate,
     load_merged_data,
     make_val_testlike,
 )
 
-MODEL_TYPE = "ranker"
-MODEL_CKPT_PATH = "models/ranker_007"
+MODEL_TYPE = "classifier"
+MODEL_CKPT_PATH = "models/classifier_007"
 SUBMISSION_COLUMNS = ["user_id", "item_id", "predict"]
-SUBMISSION_PATH = "submissions/ranker_007.csv"
+SUBMISSION_PATH = "submissions/classifier_007.csv"
 
 if __name__ == "__main__":
     logger.info("Pipeline launched")
@@ -42,7 +42,7 @@ if __name__ == "__main__":
         train_df=train_df,
         val_df=val_df,
         test_df=test_pairs_data,
-        check_for_dumps=False,
+        check_for_dumps=True,
         include_lightfm_scores=True,
     )
     logger.info("Made collaborative filtering")
@@ -72,52 +72,51 @@ if __name__ == "__main__":
         )
     )
 
-    ranker = CatBoostRanker(
+    classifier = CatBoostClassifier(
         verbose=True,
         iterations=5000,
-        loss_function="PairLogitPairwise",  # "YetiRankPairwise", # "YetiRank", #
         cat_features=["user_id", "source_id", "item_id"],
         task_type="GPU",
         devices="0",
-        eval_metric=ROCAUCMetric(),
+        eval_metric=ROCAUCMetric4Clf(),
         metric_period=100,
     )
-    logger.info(f"Initialized model: {ranker=}")
+    logger.info(f"Initialized model: {classifier=}")
 
     train_df = train_df.sort_values(by="user_id", axis=0)
     val_df = make_val_testlike(val_df, "explicit")
     val_df = val_df.sort_values(by="user_id", axis=0)
-
+    breakpoint()
     val_pool = Pool(
         data=val_df[columns],
         label=val_df[target],
-        group_id=val_df["user_id"],
+        # group_id=val_df["user_id"],
         cat_features=["user_id", "source_id", "item_id"],
     )
 
     np.save(TRAIN_USER_IDS_PATH, train_df.user_id.values)
     np.save(VAL_USER_IDS_PATH, val_df.user_id.values)
 
-    ranker.fit(
+    classifier.fit(
         X=train_df[columns],
         y=train_df[target],
-        group_id=train_df["user_id"],
+        # group_id=train_df["user_id"],
         eval_set=val_pool,
     )
     logger.info("Successfully finished training")
 
-    ranker.save_model(MODEL_CKPT_PATH)
+    classifier.save_model(MODEL_CKPT_PATH)
     logger.info("Saved model")
 
-    ranker_prediction = ranker.predict(val_df[columns])
+    classifier_prediction = classifier.predict(val_df[columns])
     logger.info("Predicted val scores")
 
-    ranker_score = evaluate(
-        val_df.user_id.values, val_df[target].values, ranker_prediction
+    classifier_score = evaluate(
+        val_df.user_id.values, val_df[target].values, classifier_prediction
     )
-    logger.info(f"Evaluated: {ranker_score=}")
+    logger.info(f"Evaluated: {classifier_score=}")
 
-    test_score = ranker.predict(test_df[columns])
+    test_score = classifier.predict(test_df[columns])
     logger.info("Predicted test scores")
 
     if len(test_score.shape) > 1 and test_score.shape[-1] > 1:
@@ -127,8 +126,8 @@ if __name__ == "__main__":
     test_df[SUBMISSION_COLUMNS].to_csv(SUBMISSION_PATH, index=False)
     logger.info(f"Saved submission at {SUBMISSION_PATH}")
 
-    feature_names = ranker.feature_names_
-    feature_importances = ranker.feature_importances_
+    feature_names = classifier.feature_names_
+    feature_importances = classifier.feature_importances_
     feat_imp_df = pd.DataFrame(
         {"name": feature_names, "importance": feature_importances}
     )

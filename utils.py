@@ -10,6 +10,7 @@ from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
 VAL_USER_IDS_PATH = "dumps/val_user_ids.npy"
+TRAIN_USER_IDS_PATH = "dumps/train_user_ids.npy"
 
 
 def load_data():
@@ -44,6 +45,33 @@ def load_data():
     user_item_data["explicit"] = user_item_data.like - user_item_data.dislike
 
     return user_item_data, user_meta_data, item_meta_data, test_pairs_data
+
+
+def load_merged_data():
+    user_item_data, user_meta_data, item_meta_data, test_pairs_data = load_data()
+    user_item_data = user_item_data.merge(
+        right=item_meta_data.drop(columns="embeddings"),
+        on="item_id",
+        how="left",
+    )
+    test_pairs_data = test_pairs_data.merge(
+        right=item_meta_data.drop(columns="embeddings"),
+        on="item_id",
+        how="left",
+    )
+    user_item_data = user_item_data.merge(
+        right=user_meta_data,
+        on="user_id",
+        how="left",
+    )
+    test_pairs_data = test_pairs_data.merge(
+        right=user_meta_data,
+        on="user_id",
+        how="left",
+    )
+    user_item_data["timespent_rel"] = user_item_data["timespent"] / user_item_data["duration"]
+
+    return user_item_data, test_pairs_data
 
 
 def get_sparse_train_val(share_weight=0, bookmarks_weight=0, timespent_rel_weight=0):
@@ -230,16 +258,40 @@ class ROCAUCMetric:
     def evaluate(self, approxes, target, weight):
         assert len(approxes) == 1
         assert len(target) == len(approxes[0])
-
+        train_user_ids = np.load(TRAIN_USER_IDS_PATH)
         val_user_ids = np.load(VAL_USER_IDS_PATH)
         approx = approxes[0]
 
         roc_auc_score = evaluate(
-            user_id=val_user_ids,
+            user_id=val_user_ids if len(target)==len(val_user_ids) else train_user_ids,
             target=target,
             score=approx,
         )
+        del train_user_ids, val_user_ids
+        return roc_auc_score, 1
 
+    def get_final_error(self, error, weight):
+        return error / weight
+
+
+class ROCAUCMetric4Clf:
+    def is_max_optimal(self):
+        return True  # greater is better
+
+    def evaluate(self, approxes, target, weight):
+        assert len(approxes) == 3
+        assert len(target) == len(approxes[0])
+        print(approxes, weight)
+        train_user_ids = np.load(TRAIN_USER_IDS_PATH)
+        val_user_ids = np.load(VAL_USER_IDS_PATH)
+        approx = approxes[2]
+
+        roc_auc_score = evaluate(
+            user_id=val_user_ids if len(target)==len(val_user_ids) else train_user_ids,
+            target=target,
+            score=approx,
+        )
+        del train_user_ids, val_user_ids
         return roc_auc_score, 1
 
     def get_final_error(self, error, weight):
