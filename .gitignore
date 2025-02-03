@@ -1,6 +1,8 @@
 *.csv
 data
 vk_env
-__pycache__/
-ranker
+submissions
+catboost_info
 dumps
+models
+__pycache__/

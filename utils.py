@@ -281,15 +281,17 @@ class ROCAUCMetric4Clf:
     def evaluate(self, approxes, target, weight):
         assert len(approxes) == 3
         assert len(target) == len(approxes[0])
-        print(approxes, weight)
+
         train_user_ids = np.load(TRAIN_USER_IDS_PATH)
         val_user_ids = np.load(VAL_USER_IDS_PATH)
-        approx = approxes[2]
+
+        approxes = np.exp(np.stack(approxes))
+        probas = approxes/np.sum(approxes, axis=0)
 
         roc_auc_score = evaluate(
             user_id=val_user_ids if len(target)==len(val_user_ids) else train_user_ids,
             target=target,
-            score=approx,
+            score=probas[2],
         )
         del train_user_ids, val_user_ids
         return roc_auc_score, 1

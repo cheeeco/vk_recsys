@@ -14,9 +14,10 @@ from utils import (
 )
 
 MODEL_TYPE = "ranker"
-MODEL_CKPT_PATH = "models/ranker_007"
+MODEL_CKPT_PATH = "models/ranker_008_uptrained"
 SUBMISSION_COLUMNS = ["user_id", "item_id", "predict"]
-SUBMISSION_PATH = "submissions/ranker_007.csv"
+SUBMISSION_PATH = "submissions/ranker_008_uptrained.csv"
+
 
 if __name__ == "__main__":
     logger.info("Pipeline launched")
@@ -42,7 +43,7 @@ if __name__ == "__main__":
         train_df=train_df,
         val_df=val_df,
         test_df=test_pairs_data,
-        check_for_dumps=False,
+        check_for_dumps=True,
         include_lightfm_scores=True,
     )
     logger.info("Made collaborative filtering")
@@ -52,7 +53,7 @@ if __name__ == "__main__":
         train_df=train_df,
         val_df=val_df,
         test_df=test_df,
-        check_for_dumps=False,
+        check_for_dumps=True,
     )
     del history_df
     logger.info("Created features")
@@ -75,7 +76,7 @@ if __name__ == "__main__":
     ranker = CatBoostRanker(
         verbose=True,
         iterations=5000,
-        loss_function="PairLogitPairwise",  # "YetiRankPairwise", # "YetiRank", #
+        loss_function="PairLogitPairwise",
         cat_features=["user_id", "source_id", "item_id"],
         task_type="GPU",
         devices="0",

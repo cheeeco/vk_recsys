@@ -28,7 +28,7 @@ if __name__ == "__main__":
 
     n_interactions = user_item_data.shape[0]
     val_size = int(n_interactions * 0.15)
-    train_size = int(10e6)
+    train_size = int(5e6)
     history_size = n_interactions - train_size - val_size
 
     history_df = user_item_data[:history_size]
@@ -42,7 +42,7 @@ if __name__ == "__main__":
         train_df=train_df,
         val_df=val_df,
         test_df=test_pairs_data,
-        check_for_dumps=True,
+        check_for_dumps=False,
         include_lightfm_scores=True,
     )
     logger.info("Made collaborative filtering")
@@ -74,8 +74,9 @@ if __name__ == "__main__":
 
     classifier = CatBoostClassifier(
         verbose=True,
-        iterations=5000,
+        iterations=1000,
         cat_features=["user_id", "source_id", "item_id"],
+        auto_class_weights="SqrtBalanced",
         task_type="GPU",
         devices="0",
         eval_metric=ROCAUCMetric4Clf(),
@@ -86,7 +87,7 @@ if __name__ == "__main__":
     train_df = train_df.sort_values(by="user_id", axis=0)
     val_df = make_val_testlike(val_df, "explicit")
     val_df = val_df.sort_values(by="user_id", axis=0)
-    breakpoint()
+
     val_pool = Pool(
         data=val_df[columns],
         label=val_df[target],
@@ -108,20 +109,20 @@ if __name__ == "__main__":
     classifier.save_model(MODEL_CKPT_PATH)
     logger.info("Saved model")
 
-    classifier_prediction = classifier.predict(val_df[columns])
+    classifier_prediction = classifier.predict_proba(val_df[columns])
     logger.info("Predicted val scores")
 
     classifier_score = evaluate(
-        val_df.user_id.values, val_df[target].values, classifier_prediction
+        val_df.user_id.values, val_df[target].values, classifier_prediction[:,2]
     )
     logger.info(f"Evaluated: {classifier_score=}")
 
-    test_score = classifier.predict(test_df[columns])
+    test_score = classifier.predict_proba(test_df[columns])
     logger.info("Predicted test scores")
 
     if len(test_score.shape) > 1 and test_score.shape[-1] > 1:
         # it is classifier
-        test_score = test_score[:, 1]
+        test_score = test_score[:, 2]
     test_df["predict"] = test_score
     test_df[SUBMISSION_COLUMNS].to_csv(SUBMISSION_PATH, index=False)
     logger.info(f"Saved submission at {SUBMISSION_PATH}")
