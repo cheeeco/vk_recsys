@@ -9,6 +9,7 @@ from utils import (
     VAL_USER_IDS_PATH,
     ROCAUCMetric,
     evaluate,
+    download_data_from_ods,
     load_merged_data,
     make_val_testlike,
 )
@@ -21,6 +22,9 @@ SUBMISSION_PATH = "submissions/ranker_008_uptrained.csv"
 
 if __name__ == "__main__":
     logger.info("Pipeline launched")
+
+    download_data_from_ods()
+    logger.info("Downloaded data from ods")
 
     user_item_data, test_pairs_data = load_merged_data()
     logger.info("Data loaded")

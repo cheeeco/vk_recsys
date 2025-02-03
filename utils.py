@@ -1,20 +1,47 @@
+import os
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
+import requests
 from lifelines.utils import concordance_index
-from scipy.sparse import csr_matrix
-from sklearn.model_selection import train_test_split
+from loguru import logger
 from tqdm import tqdm
+
+DUMPS_DIR = "dumps"
+DATA_DIR = "data"
+MODELS_DIR = "models"
+SUBMISSIONS_DIR = "submissions"
 
 VAL_USER_IDS_PATH = "dumps/val_user_ids.npy"
 TRAIN_USER_IDS_PATH = "dumps/train_user_ids.npy"
 
 
-def load_data():
-    data_path = Path("./data")
+def download_data_from_ods(data_dir: str = DATA_DIR):
+    os.makedirs(data_dir, exist_ok=True)
+    urls = [
+        "https://storage.yandexcloud.net/ds-ods/files/data/docs/competitions/VKRecsysChallenge2024/dataset/train_interactions.parquet",
+        "https://storage.yandexcloud.net/ds-ods/files/files/c1992ccf/users_meta.parquet",
+        "https://storage.yandexcloud.net/ds-ods/files/files/13b479ed/items_meta.parquet",
+        "https://storage.yandexcloud.net/ds-ods/files/files/0235d298/test_pairs.csv",
+        "https://storage.yandexcloud.net/ds-ods/files/files/55b07019/sample_submission.csv",
+    ]
+    logger.info("Started downloading data from ods")
+    for url in urls:
+        response = requests.get(url)
+        if response.status_code == 200:
+            filename = os.path.join(data_dir, url.split("/")[-1])
+            with open(filename, "wb") as file:
+                file.write(response.content)
+            logger.info(f"Downloaded: {filename}")
+        else:
+            logger.info(
+                f"Failed to download: {url} (Status code: {response.status_code})"
+            )
+
+
+def load_data(data_dir: str = DATA_DIR):
+    data_path = Path(data_dir)
     user_item_data_path = data_path / "train_interactions.parquet"
     users_meta_data_path = data_path / "users_meta.parquet"
     items_meta_data_path = data_path / "items_meta.parquet"
@@ -47,8 +74,10 @@ def load_data():
     return user_item_data, user_meta_data, item_meta_data, test_pairs_data
 
 
-def load_merged_data():
-    user_item_data, user_meta_data, item_meta_data, test_pairs_data = load_data()
+def load_merged_data(data_dir: str = DATA_DIR):
+    user_item_data, user_meta_data, item_meta_data, test_pairs_data = load_data(
+        data_dir
+    )
     user_item_data = user_item_data.merge(
         right=item_meta_data.drop(columns="embeddings"),
         on="item_id",
@@ -68,57 +97,12 @@ def load_merged_data():
         right=user_meta_data,
         on="user_id",
         how="left",
-    )
-    user_item_data["timespent_rel"] = user_item_data["timespent"] / user_item_data["duration"]
-
-    return user_item_data, test_pairs_data
-
-
-def get_sparse_train_val(share_weight=0, bookmarks_weight=0, timespent_rel_weight=0):
-    user_item_data, user_meta_data, item_meta_data, test_pairs_data = load_data()
-    user_item_data = user_item_data.merge(
-        item_meta_data.drop(columns="embeddings"), on="item_id", how="left"
     )
     user_item_data["timespent_rel"] = (
         user_item_data["timespent"] / user_item_data["duration"]
     )
 
-    ui_train, ui_val = train_test_split(
-        user_item_data, test_size=0.15, random_state=42, shuffle=False
-    )
-
-    ui_train["weighted_target"] = ui_train["like"] * (
-        1
-        + share_weight * ui_train.share
-        + bookmarks_weight * ui_train.bookmarks
-        + timespent_rel_weight * ui_train.timespent_rel
-    )
-    u_train = ui_train.user_id.values
-    i_train = ui_train.item_id.values
-    likes_train = ui_train.like.values
-    # dislikes_train = ui_train.dislike
-
-    u_val = ui_val.user_id.values
-    i_val = ui_val.item_id.values
-    likes_val = ui_val.like.values
-    # dislikes_val = ui_val.dislike
-
-    sparse_train = csr_matrix((likes_train, (u_train, i_train)))
-    sparse_val = csr_matrix((likes_val, (u_val, i_val)))
-
-    del (
-        user_item_data,
-        user_meta_data,
-        item_meta_data,
-        test_pairs_data,
-        u_train,
-        i_train,
-        likes_train,
-        # u_val,
-        # i_val,
-        # likes_val,
-    )
-    return sparse_train, sparse_val, u_val, i_val, likes_val
+    return user_item_data, test_pairs_data
 
 
 def evaluate(user_id: np.ndarray, target: np.ndarray, score: np.ndarray) -> np.float64:
@@ -140,117 +124,6 @@ def evaluate(user_id: np.ndarray, target: np.ndarray, score: np.ndarray) -> np.f
     return np.mean(roc_aucs)
 
 
-def compare_score(score1, score2):
-    if score1 > score2:
-        return 0
-    elif score1 == score2:
-        return 0.5
-    else:
-        return 1
-
-
-def compare_target(target1, target2):
-    if target1 >= target2:
-        return 0
-    else:
-        return 1
-
-
-def roc_auc_score(y_true, y_score):
-    num = 0
-    denom = 0
-    for i in range(len(y_true)):
-        for j in range(len(y_true)):
-            if i == j:
-                continue
-            num += compare_score(y_score[i], y_score[j]) * compare_target(
-                y_true[i], y_true[j]
-            )
-            denom += compare_target(y_true[i], y_true[j])
-    return num / denom if denom > 0 else None
-
-
-def plot_feature_importances(model, graphic=True, figsize=(10, 6), palette="viridis"):
-    """
-    Plots the feature importances of a trained CatBoost model.
-
-    Parameters:
-        model (catboost.CatBoost): Trained CatBoost model.
-        graphic (bool): Flag for graphical visualization. If false, then feature importances are printed.
-        figsize (tuple): Size of the plot, default is (10, 6).
-        palette (str): Seaborn color palette for the barplot, default is 'viridis'.
-    """
-    # Get feature importances
-    feature_importances = model.get_feature_importance()
-    feature_names = model.feature_names_
-    # Create a DataFrame for plotting
-    feature_importance_df = pd.DataFrame(
-        {"feature": feature_names, "importance": feature_importances}
-    )
-
-    # Sort by importance
-    feature_importance_df = feature_importance_df.sort_values(
-        by="importance", ascending=False
-    )
-
-    if graphic is True:
-        # Set up the matplotlib figure
-        plt.figure(figsize=figsize)
-
-        # Create a horizontal bar plot
-        sns.barplot(
-            x="importance",
-            y="feature",
-            data=feature_importance_df,
-            palette=palette,
-            hue="feature",
-        )
-
-        # Set plot title and labels
-        plt.grid()
-        plt.title("CatBoost Model Feature Importances", fontsize=16)
-        plt.xlabel("Importance", fontsize=12)
-        plt.ylabel("Feature", fontsize=12)
-
-        # Display the plot
-        plt.show()
-
-    elif graphic is False:
-        for feature, importance in zip(
-            feature_importance_df["feature"], feature_importance_df["importance"]
-        ):
-            print(f"{feature=}, {importance=}")
-    else:
-        raise ValueError("ERROR. Wrong graphic argument")
-
-
-def train_test_split_wise(
-    user_item_data: pd.DataFrame,
-    test_size: float = 0.15,
-    random_state: int = 42,
-    shuffle: bool = False,
-):
-    train_df, val_df = train_test_split(
-        user_item_data,
-        test_size=test_size,
-        random_state=random_state,
-        shuffle=shuffle,
-    )
-    # Step 1: Filter users with less than 20 interactions
-    interaction_counts = val_df["user_id"].value_counts()
-    users_with_20_plus_interactions = interaction_counts[interaction_counts >= 20].index
-    val_df = val_df[val_df["user_id"].isin(users_with_20_plus_interactions)]
-    # Step 2: Keep only the first 20 interactions per user
-    val_df["interaction_rank"] = val_df.groupby("user_id").cumcount() + 1
-    val_df = val_df[val_df["interaction_rank"] <= 20].drop(columns="interaction_rank")
-    # Step 3: Filter out users with zero total likes
-    user_likes = val_df.groupby("user_id")["like"].sum()
-    users_with_likes = user_likes[user_likes > 0].index
-    val_df = val_df[val_df["user_id"].isin(users_with_likes)]
-
-    return train_df, val_df
-
-
 class ROCAUCMetric:
     def is_max_optimal(self):
         return True  # greater is better
@@ -263,7 +136,9 @@ class ROCAUCMetric:
         approx = approxes[0]
 
         roc_auc_score = evaluate(
-            user_id=val_user_ids if len(target)==len(val_user_ids) else train_user_ids,
+            user_id=val_user_ids
+            if len(target) == len(val_user_ids)
+            else train_user_ids,
             target=target,
             score=approx,
         )
@@ -286,10 +161,12 @@ class ROCAUCMetric4Clf:
         val_user_ids = np.load(VAL_USER_IDS_PATH)
 
         approxes = np.exp(np.stack(approxes))
-        probas = approxes/np.sum(approxes, axis=0)
+        probas = approxes / np.sum(approxes, axis=0)
 
         roc_auc_score = evaluate(
-            user_id=val_user_ids if len(target)==len(val_user_ids) else train_user_ids,
+            user_id=val_user_ids
+            if len(target) == len(val_user_ids)
+            else train_user_ids,
             target=target,
             score=probas[2],
         )
@@ -302,14 +179,14 @@ class ROCAUCMetric4Clf:
 
 def make_val_testlike(val_df: pd.DataFrame, target: str = "like") -> pd.DataFrame:
     val_df = val_df.copy()
-    # Step 1: Filter users with less than 20 interactions
+    # filter users with less than 20 interactions
     interaction_counts = val_df["user_id"].value_counts()
     users_with_20_plus_interactions = interaction_counts[interaction_counts >= 20].index
     val_df = val_df[val_df["user_id"].isin(users_with_20_plus_interactions)]
-    # Step 2: Keep only the first 20 interactions per user
+    # keep only the first 20 interactions per user
     val_df["interaction_rank"] = val_df.groupby("user_id").cumcount() + 1
     val_df = val_df[val_df["interaction_rank"] <= 20].drop(columns="interaction_rank")
-    # Step 3: Filter out users with zero total likes
+    # filter out users with zero total likes
     user_likes = val_df.groupby("user_id")[target].apply(lambda x: (x != 0).any())
     users_with_likes = user_likes[user_likes > 0].index
     val_df = val_df[val_df["user_id"].isin(users_with_likes)]
